@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AEGIS</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    background: #08080f;
+    font-family: 'IBM Plex Mono', 'Fira Code', 'SF Mono', 'Consolas', monospace;
+    color: #7a7a9a;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  .scanlines {
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.06) 2px, rgba(0,0,0,0.06) 4px);
+    pointer-events: none; z-index: 10;
+  }
+  .vignette {
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.6) 100%);
+    pointer-events: none; z-index: 11;
+  }
+  .glow {
+    position: fixed; inset: 0;
+    box-shadow: inset 0 0 120px rgba(20,20,80,0.2);
+    pointer-events: none; z-index: 9;
+  }
+  #output {
+    flex: 1; overflow-y: auto; padding: 16px 20px;
+    font-size: 12.5px; line-height: 1.7; z-index: 5;
+  }
+  #output::-webkit-scrollbar { width: 4px; }
+  #output::-webkit-scrollbar-track { background: #08080f; }
+  #output::-webkit-scrollbar-thumb { background: #1a1a3a; border-radius: 2px; }
+  #output::-webkit-scrollbar-thumb:hover { background: #2a2a5a; }
+  .line { white-space: pre; }
+  .line-system { color: #7a7a9a; }
+  .line-cmd { color: #b0b0ff; }
+  .line-success { color: #4a9aff; }
+  .line-error { color: #ff4a4a; }
+  .line-warn { color: #e4c44a; }
+  .line-buy { color: #4ac8ff; }
+  .line-sell { color: #ff6b6b; }
+  .line-price { color: #e0e0ff; font-weight: 500; }
+  .line-header { color: #6a8aff; font-weight: 500; }
+  .line-dim { color: #2a2a4a; }
+  .input-bar {
+    padding: 12px 20px;
+    border-top: 1px solid #1a1a2e;
+    display: flex; align-items: center; gap: 8px;
+    flex-shrink: 0; z-index: 5;
+  }
+  .prompt { color: #4a9aff; font-size: 13px; font-weight: 700; }
+  #addr {
+    flex: 1; background: transparent; border: none; outline: none;
+    color: #b0b0ff; font-family: inherit; font-size: 13px; caret-color: #4a9aff;
+  }
+  #addr::placeholder { color: #2a2a5a; }
+  .track-btn {
+    background: transparent; border: 1px solid #2a2a5a; color: #4a4a9a;
+    padding: 4px 14px; font-family: inherit; font-size: 11px; cursor: pointer;
+    letter-spacing: 0.05em; text-transform: uppercase; transition: all 0.15s;
+  }
+  .track-btn:hover { border-color: #4a9aff; color: #4a9aff; }
+  .legend {
+    padding: 6px 20px 10px;
+    display: flex; gap: 16px; font-size: 10px; color: #2a2a5a; z-index: 5;
+  }
+  .live-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #4a9aff; display: inline-block;
+    animation: pulse 2s infinite;
+  }
+  .live-badge {
+    display: none; font-size: 10px; color: #4a6aff;
+    align-items: center; gap: 6px; margin-left: auto;
+  }
+  .live-badge.active { display: flex; }
+  .header-bar {
+    padding: 12px 20px;
+    border-bottom: 1px solid #1a1a2e;
+    display: flex; align-items: center;
+    flex-shrink: 0; z-index: 5;
+  }
+  .blink { animation: blink 1s step-end infinite; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+</style>
+</head>
+<body>
+
+<div class="scanlines"></div>
+<div class="vignette"></div>
+<div class="glow"></div>
+
+<div class="header-bar">
+  <span id="liveBadge" class="live-badge">
+    <span class="live-dot"></span> LIVE
+  </span>
+</div>
+
+<div id="output"></div>
+
+<div class="input-bar">
+  <span class="prompt">❯</span>
+  <input type="text" id="addr" placeholder="paste contract address..." spellcheck="false">
+  <button class="track-btn" id="trackBtn">track</button>
+</div>
+
+<div class="legend">
+  <span><span style="color:#4ac8ff">▲</span> buy</span>
+  <span><span style="color:#ff6b6b">▼</span> sell</span>
+  <span style="margin-left:auto">polls every 10s</span>
+</div>
+
+<script>
+const DEX_API = "https://api.dexscreener.com/latest/dex/tokens";
+const output = document.getElementById("output");
+const addrInput = document.getElementById("addr");
+const trackBtn = document.getElementById("trackBtn");
+const liveBadge = document.getElementById("liveBadge");
+
+let activeAddress = null;
+let lastData = null;
+let prevBuys = null;
+let prevSells = null;
+let pollInterval = null;
+
+function addLine(type, text) {
+  const div = document.createElement("div");
+  div.className = "line line-" + type;
+  div.textContent = text;
+  output.appendChild(div);
+  output.scrollTop = output.scrollHeight;
+}
+
+function ts() {
+  return new Date().toLocaleTimeString("en-US", { hour12: false });
+}
+
+function fmtUsd(n) {
+  if (!n && n !== 0) return "$—";
+  if (n >= 1e9) return "$" + (n / 1e9).toFixed(2) + "B";
+  if (n >= 1e6) return "$" + (n / 1e6).toFixed(2) + "M";
+  if (n >= 1e3) return "$" + (n / 1e3).toFixed(1) + "K";
+  if (n >= 1) return "$" + n.toFixed(2);
+  if (n >= 0.0001) return "$" + n.toFixed(6);
+  return "$" + n.toExponential(2);
+}
+
+function fmtPct(n) {
+  if (!n && n !== 0) return "—";
+  return (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
+}
+
+function shorten(addr) {
+  if (!addr) return "???";
+  return addr.slice(0, 6) + "..." + addr.slice(-4);
+}
+
+function pad(s, len) {
+  while (s.length < len) s += " ";
+  return s;
+}
+
+async function fetchToken(addr, isInitial) {
+  try {
+    const res = await fetch(DEX_API + "/" + addr);
+    const data = await res.json();
+
+    if (!data.pairs || !data.pairs.length) {
+      if (isInitial) addLine("error", "[" + ts() + "] no pairs found. check the contract address.");
+      return;
+    }
+
+    const pairs = data.pairs
+      .filter(p => p.chainId === "solana")
+      .sort((a, b) => (b.volume?.h24 || 0) - (a.volume?.h24 || 0));
+
+    if (!pairs.length) {
+      addLine("error", "[" + ts() + "] no solana pairs found.");
+      return;
+    }
+
+    const main = pairs[0];
+
+    if (isInitial) {
+      addLine("success", "[" + ts() + "] found " + pairs.length + " pair" + (pairs.length > 1 ? "s" : "") + " on solana");
+      addLine("dim", "─".repeat(58));
+      addLine("system", "  token:      " + (main.baseToken?.name || "?") + " (" + (main.baseToken?.symbol || "?") + ")");
+      addLine("system", "  pair:       " + main.baseToken?.symbol + "/" + main.quoteToken?.symbol + " on " + main.dexId);
+      addLine("system", "  pair addr:  " + shorten(main.pairAddress));
+      addLine("system", "  created:    " + (main.pairCreatedAt ? new Date(main.pairCreatedAt).toLocaleString() : "unknown"));
+      addLine("dim", "─".repeat(58));
+
+      addLine("header", "[" + ts() + "] ── SNAPSHOT ──");
+      addLine("price", "  price        " + fmtUsd(parseFloat(main.priceUsd || 0)));
+      addLine(main.priceChange?.h24 >= 0 ? "buy" : "sell", "  24h change   " + fmtPct(main.priceChange?.h24));
+      addLine("system", "  24h vol      " + fmtUsd(main.volume?.h24));
+      addLine("system", "  liquidity    " + fmtUsd(main.liquidity?.usd));
+      addLine("system", "  fdv          " + fmtUsd(main.fdv));
+      addLine("system", "  mkt cap      " + fmtUsd(main.marketCap));
+      addLine("dim", "─".repeat(58));
+
+      const txns = main.txns || {};
+      addLine("header", "[" + ts() + "] ── TRANSACTIONS ──");
+      if (txns.m5) addLine("system", "  5m           " + (txns.m5.buys || 0) + " buys  /  " + (txns.m5.sells || 0) + " sells");
+      if (txns.h1) addLine("system", "  1h           " + (txns.h1.buys || 0) + " buys  /  " + (txns.h1.sells || 0) + " sells");
+      if (txns.h6) addLine("system", "  6h           " + (txns.h6.buys || 0) + " buys  /  " + (txns.h6.sells || 0) + " sells");
+      if (txns.h24) addLine("system", "  24h          " + (txns.h24.buys || 0) + " buys  /  " + (txns.h24.sells || 0) + " sells");
+
+      addLine("dim", "─".repeat(58));
+      addLine("header", "[" + ts() + "] ── VOLUME ──");
+      if (main.volume?.m5 !== undefined) addLine("system", "  5m           " + fmtUsd(main.volume.m5));
+      if (main.volume?.h1 !== undefined) addLine("system", "  1h           " + fmtUsd(main.volume.h1));
+      if (main.volume?.h6 !== undefined) addLine("system", "  6h           " + fmtUsd(main.volume.h6));
+      if (main.volume?.h24 !== undefined) addLine("system", "  24h          " + fmtUsd(main.volume.h24));
+
+      addLine("dim", "─".repeat(58));
+      addLine("system", "[" + ts() + "] polling every 10s...");
+
+      prevBuys = txns.m5?.buys || 0;
+      prevSells = txns.m5?.sells || 0;
+      lastData = main;
+    } else {
+      if (!lastData) return;
+
+      const priceNow = parseFloat(main.priceUsd || 0);
+      const pricePrev = parseFloat(lastData.priceUsd || 0);
+      const priceDelta = pricePrev ? ((priceNow - pricePrev) / pricePrev) * 100 : 0;
+
+      const txns5m = main.txns?.m5 || { buys: 0, sells: 0 };
+      const newBuys = txns5m.buys - (prevBuys || 0);
+      const newSells = txns5m.sells - (prevSells || 0);
+
+      const type = priceDelta > 0 ? "buy" : priceDelta < 0 ? "sell" : "system";
+      const arrow = priceDelta > 0 ? "▲" : priceDelta < 0 ? "▼" : "─";
+
+      addLine(type, "[" + ts() + "] " + arrow + " " + pad(fmtUsd(priceNow), 14) + " " + pad(fmtPct(priceDelta), 10) + " vol:" + pad(fmtUsd(main.volume?.m5 || 0), 10) + " buys:" + txns5m.buys + " sells:" + txns5m.sells);
+
+      if (newBuys > 0) {
+        addLine("buy", "           + " + newBuys + " new buy" + (newBuys > 1 ? "s" : "") + " in last tick");
+      }
+      if (newSells > 0) {
+        addLine("sell", "           + " + newSells + " new sell" + (newSells > 1 ? "s" : "") + " in last tick");
+      }
+
+      prevBuys = txns5m.buys;
+      prevSells = txns5m.sells;
+      lastData = main;
+    }
+  } catch (err) {
+    addLine("error", "[" + ts() + "] error: " + err.message);
+  }
+}
+
+function startTracking() {
+  const addr = addrInput.value.trim();
+  if (!addr) return;
+
+  if (pollInterval) clearInterval(pollInterval);
+  prevBuys = null;
+  prevSells = null;
+  lastData = null;
+  activeAddress = addr;
+
+  addLine("dim", "");
+  addLine("cmd", "> track " + addr);
+  addLine("system", "[" + ts() + "] querying...");
+
+  fetchToken(addr, true).then(() => {
+    liveBadge.classList.add("active");
+    pollInterval = setInterval(() => {
+      fetchToken(activeAddress, false);
+    }, 10000);
+  });
+}
+
+addrInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") startTracking();
+});
+trackBtn.addEventListener("click", startTracking);
+
+// Boot
+addLine("system", "AEGIS TERMINAL v0.2.0");
+addLine("dim", "─".repeat(58));
+addLine("system", "paste a token contract address to begin.");
+</script>
+</body>
+</html>
