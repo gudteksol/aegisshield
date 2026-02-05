@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AEGIS</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    background: #08080f;
+    font-family: 'IBM Plex Mono', 'Fira Code', 'SF Mono', 'Consolas', monospace;
+    color: #7a7a9a;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  .scanlines {
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.06) 2px, rgba(0,0,0,0.06) 4px);
+    pointer-events: none; z-index: 10;
+  }
+  .vignette {
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.6) 100%);
+    pointer-events: none; z-index: 11;
+  }
+  .glow {
+    position: fixed; inset: 0;
+    box-shadow: inset 0 0 120px rgba(20,20,80,0.2);
+    pointer-events: none; z-index: 9;
+  }
+  .header-bar {
+    padding: 12px 20px;
+    border-bottom: 1px solid #1a1a2e;
+    display: flex; align-items: center;
+    flex-shrink: 0; z-index: 5;
+  }
+  .live-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #4a9aff; display: inline-block;
+    animation: pulse 2s infinite;
+  }
+  .live-badge {
+    display: none; font-size: 10px; color: #4a6aff;
+    align-items: center; gap: 6px; margin-left: auto;
+  }
+  .live-badge.active { display: flex; }
+
+  #statsPanel {
+    display: none;
+    flex-shrink: 0;
+    z-index: 5;
+    padding: 12px 20px 8px;
+    border-bottom: 1px solid #1a1a2e;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  #statsPanel.active { display: block; }
+  .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 4px 24px;
+  }
+  .stat-label { color: #3a3a6a; }
+  .stat-value { color: #7a7a9a; }
+  .stat-value.highlight { color: #e0e0ff; font-weight: 500; }
+  .stat-value.up { color: #4ac8ff; }
+  .stat-value.down { color: #ff6b6b; }
+  .stats-header {
+    color: #6a8aff; font-weight: 500; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .stats-header .token-name { color: #e0e0ff; }
+  .stats-header .pair-info { color: #3a3a6a; font-weight: 400; font-size: 11px; }
+  .stats-section-title {
+    color: #2a2a4a; margin-top: 8px; margin-bottom: 2px;
+    font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  }
+  .txn-grid {
+    display: grid;
+    grid-template-columns: 40px 1fr 1fr;
+    gap: 2px 12px;
+    font-size: 11px;
+  }
+  .txn-grid .tg-label { color: #3a3a6a; }
+  .txn-grid .tg-buys { color: #4ac8ff; }
+  .txn-grid .tg-sells { color: #ff6b6b; }
+  .txn-grid .tg-head { color: #2a2a4a; font-size: 10px; }
+  .update-flash { animation: flash 0.4s ease-out; }
+  @keyframes flash {
+    0% { background: rgba(74,154,255,0.1); }
+    100% { background: transparent; }
+  }
+
+  #output {
+    flex: 1; overflow-y: auto; padding: 12px 20px;
+    font-size: 12px; line-height: 1.7; z-index: 5;
+  }
+  #output::-webkit-scrollbar { width: 4px; }
+  #output::-webkit-scrollbar-track { background: #08080f; }
+  #output::-webkit-scrollbar-thumb { background: #1a1a3a; border-radius: 2px; }
+  #output::-webkit-scrollbar-thumb:hover { background: #2a2a5a; }
+  .line { white-space: pre; }
+  .line-system { color: #7a7a9a; }
+  .line-cmd { color: #b0b0ff; }
+  .line-success { color: #4a9aff; }
+  .line-error { color: #ff4a4a; }
+  .line-buy { color: #4ac8ff; }
+  .line-sell { color: #ff6b6b; }
+  .line-dim { color: #2a2a4a; }
+  .line-header { color: #6a8aff; font-weight: 500; }
+
+  .input-bar {
+    padding: 12px 20px;
+    border-top: 1px solid #1a1a2e;
+    display: flex; align-items: center; gap: 8px;
+    flex-shrink: 0; z-index: 5;
+  }
+  .prompt { color: #4a9aff; font-size: 13px; font-weight: 700; }
+  #addr {
+    flex: 1; background: transparent; border: none; outline: none;
+    color: #b0b0ff; font-family: inherit; font-size: 13px; caret-color: #4a9aff;
+  }
+  #addr::placeholder { color: #2a2a5a; }
+  .track-btn {
+    background: transparent; border: 1px solid #2a2a5a; color: #4a4a9a;
+    padding: 4px 14px; font-family: inherit; font-size: 11px; cursor: pointer;
+    letter-spacing: 0.05em; text-transform: uppercase; transition: all 0.15s;
+  }
+  .track-btn:hover { border-color: #4a9aff; color: #4a9aff; }
+  .legend {
+    padding: 6px 20px 10px;
+    display: flex; gap: 16px; font-size: 10px; color: #2a2a5a; z-index: 5;
+  }
+  .blink { animation: blink 1s step-end infinite; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+</style>
+</head>
+<body>
+
+<div class="scanlines"></div>
+<div class="vignette"></div>
+<div class="glow"></div>
+
+<div class="header-bar">
+  <span id="liveBadge" class="live-badge">
+    <span class="live-dot"></span> LIVE
+  </span>
+</div>
+
+<div id="statsPanel">
+  <div class="stats-header">
+    <span class="token-name" id="sTokenName">—</span>
+    <span class="pair-info" id="sPairInfo">—</span>
+  </div>
+  <div class="stats-grid">
+    <div><span class="stat-label">price </span><span class="stat-value highlight" id="sPrice">—</span></div>
+    <div><span class="stat-label">24h </span><span class="stat-value" id="s24hChange">—</span></div>
+    <div><span class="stat-label">mkt cap </span><span class="stat-value" id="sMktCap">—</span></div>
+    <div><span class="stat-label">liq </span><span class="stat-value" id="sLiq">—</span></div>
+    <div><span class="stat-label">fdv </span><span class="stat-value" id="sFdv">—</span></div>
+    <div><span class="stat-label">created </span><span class="stat-value" id="sCreated">—</span></div>
+  </div>
+
+  <div class="stats-section-title">volume</div>
+  <div class="stats-grid">
+    <div><span class="stat-label">5m </span><span class="stat-value" id="sVol5m">—</span></div>
+    <div><span class="stat-label">1h </span><span class="stat-value" id="sVol1h">—</span></div>
+    <div><span class="stat-label">6h </span><span class="stat-value" id="sVol6h">—</span></div>
+    <div><span class="stat-label">24h </span><span class="stat-value" id="sVol24h">—</span></div>
+  </div>
+
+  <div class="stats-section-title">transactions</div>
+  <div class="txn-grid">
+    <div class="tg-head"></div><div class="tg-head">buys</div><div class="tg-head">sells</div>
+    <div class="tg-label">5m</div><div class="tg-buys" id="sTx5mB">—</div><div class="tg-sells" id="sTx5mS">—</div>
+    <div class="tg-label">1h</div><div class="tg-buys" id="sTx1hB">—</div><div class="tg-sells" id="sTx1hS">—</div>
+    <div class="tg-label">6h</div><div class="tg-buys" id="sTx6hB">—</div><div class="tg-sells" id="sTx6hS">—</div>
+    <div class="tg-label">24h</div><div class="tg-buys" id="sTx24hB">—</div><div class="tg-sells" id="sTx24hS">—</div>
+  </div>
+  <div style="color:#2a2a4a; margin-top:6px; font-size:10px;" id="sLastUpdate">—</div>
+</div>
+
+<div id="output"></div>
+
+<div class="input-bar">
+  <span class="prompt">❯</span>
+  <input type="text" id="addr" placeholder="paste contract address..." spellcheck="false">
+  <button class="track-btn" id="trackBtn">track</button>
+</div>
+
+<div class="legend">
+  <span><span style="color:#4ac8ff">▲</span> buy</span>
+  <span><span style="color:#ff6b6b">▼</span> sell</span>
+  <span style="margin-left:auto">polls every 10s</span>
+</div>
+
+<script>
+const DEX_API = "https://api.dexscreener.com/latest/dex/tokens";
+const output = document.getElementById("output");
+const addrInput = document.getElementById("addr");
+const trackBtn = document.getElementById("trackBtn");
+const liveBadge = document.getElementById("liveBadge");
+const statsPanel = document.getElementById("statsPanel");
+
+let activeAddress = null;
+let lastData = null;
+let prevBuys = null;
+let prevSells = null;
+let pollInterval = null;
+
+function addLine(type, text) {
+  const div = document.createElement("div");
+  div.className = "line line-" + type;
+  div.textContent = text;
+  output.appendChild(div);
+  output.scrollTop = output.scrollHeight;
+}
+
+function ts() {
+  return new Date().toLocaleTimeString("en-US", { hour12: false });
+}
+
+function fmtUsd(n) {
+  if (!n && n !== 0) return "$—";
+  if (n >= 1e9) return "$" + (n / 1e9).toFixed(2) + "B";
+  if (n >= 1e6) return "$" + (n / 1e6).toFixed(2) + "M";
+  if (n >= 1e3) return "$" + (n / 1e3).toFixed(1) + "K";
+  if (n >= 1) return "$" + n.toFixed(2);
+  if (n >= 0.0001) return "$" + n.toFixed(6);
+  return "$" + n.toExponential(2);
+}
+
+function fmtPct(n) {
+  if (!n && n !== 0) return "—";
+  return (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
+}
+
+function pad(s, len) {
+  while (s.length < len) s += " ";
+  return s;
+}
+
+function flashEl(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.remove("update-flash");
+  void el.offsetWidth;
+  el.classList.add("update-flash");
+}
+
+function setVal(id, val, doFlash) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (el.textContent !== val) {
+    el.textContent = val;
+    if (doFlash) flashEl(id);
+  }
+}
+
+function setValClass(id, val, cls, doFlash) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = "stat-value " + cls;
+  if (el.textContent !== val) {
+    el.textContent = val;
+    if (doFlash) flashEl(id);
+  }
+}
+
+function updateStats(main, isUpdate) {
+  const f = isUpdate;
+  setVal("sTokenName", (main.baseToken?.name || "?") + " (" + (main.baseToken?.symbol || "?") + ")", false);
+  setVal("sPairInfo", main.baseToken?.symbol + "/" + main.quoteToken?.symbol + " on " + main.dexId, false);
+  setVal("sPrice", fmtUsd(parseFloat(main.priceUsd || 0)), f);
+  const ch24 = main.priceChange?.h24;
+  setValClass("s24hChange", fmtPct(ch24), ch24 >= 0 ? "up" : "down", f);
+  setVal("sMktCap", fmtUsd(main.marketCap), f);
+  setVal("sLiq", fmtUsd(main.liquidity?.usd), f);
+  setVal("sFdv", fmtUsd(main.fdv), f);
+  setVal("sCreated", main.pairCreatedAt ? new Date(main.pairCreatedAt).toLocaleDateString() : "—", false);
+  setVal("sVol5m", fmtUsd(main.volume?.m5), f);
+  setVal("sVol1h", fmtUsd(main.volume?.h1), f);
+  setVal("sVol6h", fmtUsd(main.volume?.h6), f);
+  setVal("sVol24h", fmtUsd(main.volume?.h24), f);
+  const txns = main.txns || {};
+  setVal("sTx5mB", String(txns.m5?.buys || 0), f);
+  setVal("sTx5mS", String(txns.m5?.sells || 0), f);
+  setVal("sTx1hB", String(txns.h1?.buys || 0), f);
+  setVal("sTx1hS", String(txns.h1?.sells || 0), f);
+  setVal("sTx6hB", String(txns.h6?.buys || 0), f);
+  setVal("sTx6hS", String(txns.h6?.sells || 0), f);
+  setVal("sTx24hB", String(txns.h24?.buys || 0), f);
+  setVal("sTx24hS", String(txns.h24?.sells || 0), f);
+  document.getElementById("sLastUpdate").textContent = "last update " + ts();
+}
+
+async function fetchToken(addr, isInitial) {
+  try {
+    const res = await fetch(DEX_API + "/" + addr);
+    const data = await res.json();
+
+    if (!data.pairs || !data.pairs.length) {
+      if (isInitial) addLine("error", "[" + ts() + "] no pairs found. check the contract address.");
+      return;
+    }
+
+    const pairs = data.pairs
+      .filter(p => p.chainId === "solana")
+      .sort((a, b) => (b.volume?.h24 || 0) - (a.volume?.h24 || 0));
+
+    if (!pairs.length) {
+      addLine("error", "[" + ts() + "] no solana pairs found.");
+      return;
+    }
+
+    const main = pairs[0];
+
+    if (isInitial) {
+      addLine("success", "[" + ts() + "] connected — tracking " + (main.baseToken?.symbol || "?"));
+      addLine("dim", "─".repeat(58));
+      addLine("system", "[" + ts() + "] polling every 10s...");
+      addLine("dim", "─".repeat(58));
+
+      statsPanel.classList.add("active");
+      updateStats(main, false);
+
+      prevBuys = main.txns?.m5?.buys || 0;
+      prevSells = main.txns?.m5?.sells || 0;
+      lastData = main;
+    } else {
+      if (!lastData) return;
+
+      updateStats(main, true);
+
+      const priceNow = parseFloat(main.priceUsd || 0);
+      const pricePrev = parseFloat(lastData.priceUsd || 0);
+      const priceDelta = pricePrev ? ((priceNow - pricePrev) / pricePrev) * 100 : 0;
+
+      const txns5m = main.txns?.m5 || { buys: 0, sells: 0 };
+      const newBuys = txns5m.buys - (prevBuys || 0);
+      const newSells = txns5m.sells - (prevSells || 0);
+
+      const type = priceDelta > 0 ? "buy" : priceDelta < 0 ? "sell" : "system";
+      const arrow = priceDelta > 0 ? "▲" : priceDelta < 0 ? "▼" : "─";
+
+      addLine(type, "[" + ts() + "] " + arrow + " " + pad(fmtUsd(priceNow), 14) + " " + pad(fmtPct(priceDelta), 10) + " vol:" + pad(fmtUsd(main.volume?.m5 || 0), 10) + " buys:" + txns5m.buys + " sells:" + txns5m.sells);
+
+      if (newBuys > 0) {
+        addLine("buy", "           + " + newBuys + " new buy" + (newBuys > 1 ? "s" : "") + " in last tick");
+      }
+      if (newSells > 0) {
+        addLine("sell", "           + " + newSells + " new sell" + (newSells > 1 ? "s" : "") + " in last tick");
+      }
+
+      prevBuys = txns5m.buys;
+      prevSells = txns5m.sells;
+      lastData = main;
+    }
+  } catch (err) {
+    addLine("error", "[" + ts() + "] error: " + err.message);
+  }
+}
+
+function startTracking() {
+  const addr = addrInput.value.trim();
+  if (!addr) return;
+
+  if (pollInterval) clearInterval(pollInterval);
+  prevBuys = null;
+  prevSells = null;
+  lastData = null;
+  activeAddress = addr;
+
+  statsPanel.classList.remove("active");
+  output.innerHTML = "";
+
+  addLine("dim", "");
+  addLine("cmd", "> track " + addr);
+  addLine("system", "[" + ts() + "] querying...");
+
+  fetchToken(addr, true).then(() => {
+    liveBadge.classList.add("active");
+    pollInterval = setInterval(() => {
+      fetchToken(activeAddress, false);
+    }, 10000);
+  });
+}
+
+addrInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") startTracking();
+});
+trackBtn.addEventListener("click", startTracking);
+
+addLine("system", "AEGIS TERMINAL v0.2.0");
+addLine("dim", "─".repeat(58));
+addLine("system", "paste a token contract address to begin.");
+</script>
+</body>
+</html>
